@@ -159,6 +159,7 @@ export type StatusLineSegmentId =
 	| "cost"
 	| "context_pct"
 	| "context_total"
+	| "context_bar"
 	| "time_spent"
 	| "time"
 	| "session"

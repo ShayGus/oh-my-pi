@@ -396,6 +396,27 @@ const contextTotalSegment: StatusLineSegment = {
 	},
 };
 
+const contextBarSegment: StatusLineSegment = {
+	id: "context_bar",
+	render(ctx) {
+		const pct = ctx.contextPercent;
+		const window = ctx.contextWindow;
+		if (!window || pct === null) return { content: "", visible: false };
+
+		const barWidth = 10;
+		const filled = Math.round((pct / 100) * barWidth);
+		const empty = barWidth - filled;
+		const bar = `${"█".repeat(filled)}${"░".repeat(empty)}`;
+		const autoIcon = ctx.autoCompactEnabled && theme.icon.auto ? ` ${theme.icon.auto}` : "";
+		const text = `${bar} ${pct.toFixed(0)}%${autoIcon}`;
+
+		const color = getContextUsageThemeColor(getContextUsageLevel(pct, window));
+		const content = withIcon(theme.icon.context, theme.fg(color, text));
+
+		return { content, visible: true };
+	},
+};
+
 const timeSpentSegment: StatusLineSegment = {
 	id: "time_spent",
 	render(ctx) {
@@ -597,6 +618,7 @@ export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
 	cost: costSegment,
 	context_pct: contextPctSegment,
 	context_total: contextTotalSegment,
+	context_bar: contextBarSegment,
 	time_spent: timeSpentSegment,
 	time: timeSegment,
 	session: sessionSegment,
