@@ -15,7 +15,7 @@ import { getContextUsageLevel, getContextUsageThemeColor } from "./status-line/c
 /** Render a visual context-usage progress bar. */
 function renderContextBar(
 	contextPercent: number | null | undefined,
-	contextWindow: number,
+	_contextWindow: number,
 	barWidth: number = 10,
 ): string {
 	const pct = contextPercent ?? 0;
