@@ -732,6 +732,34 @@ describe("PersonaRuntime", () => {
 		const last = stub.presentationCalls.at(-1);
 		expect(last?.toolNames).toContain("dormant");
 	});
+	// P2 follow-up: the same union that preserves a mid-persona ACTIVATION must
+	// not resurrect a mid-persona DEACTIVATION. The baseline (an effectiveSet()
+	// over the live registry) holds every enter-time name, so seeding the merge
+	// with the frozen pre-enter snapshot alone brings the user's toggle-off back.
+	// The persona grant attributes the live absence: persona-GRANTED means a user
+	// toggle (stays off), persona-DENIED means the persona's own narrowing
+	// stripped it and the frozen snapshot restores it.
+	it("exit keeps a mid-persona deactivation of a persona-granted tool (j2l)", async () => {
+		const { stub, session } = makeSessionStub();
+		// Unrestricted persona (no `tools:`): every registered tool is granted,
+		// so the mid-persona live absence is a USER deactivation. Bash is enabled
+		// pre-enter (in the frozen snapshot) and toggled OFF mid-persona.
+		stub.enabledToolNames = ["read", "grep", "glob", "write", "bash"];
+		const runtime = makeRuntime(session, stub);
+		await runtime.enter(makeAgent(), {}, makeHooks());
+		// Mid-persona: the user disables `bash` through the same live enabled set
+		// the runtime reads (the /mcp toggle / RPC set-tools surface).
+		stub.enabledToolNames = ["read", "grep", "glob", "write"];
+		await runtime.exit(makeHooks());
+		const last = stub.presentationCalls.at(-1);
+		expect(last?.toolNames).not.toContain("bash"); // deactivation survives exit
+		// Both halves hold simultaneously: every name the user left untouched is
+		// restored via the seed or the merge, and the deactivated one alone is
+		// dropped. The stub's live set never carried edit/task/hub, so they are
+		// absent both pre-enter and post-exit.
+		expect(last?.toolNames).toEqual(["read", "grep", "glob", "write"]);
+		expect(last?.mountedToolNames).toEqual(["xd://alpha"]);
+	});
 
 	// j2l merge: the union must not resurrect a pre-entry deactivation — a name
 	// the user toggled OFF before the persona entered stays off after exit.

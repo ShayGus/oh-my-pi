@@ -328,6 +328,9 @@ export class PersonaRuntime {
 
 	async #exitInner(hooks: PersonaModelApplyHooks, deferModel: boolean): Promise<void> {
 		this.session.clearInheritedProviderPromptCacheKey();
+		// The persona grant must be read BEFORE exitPersona() clears the layer:
+		// it decides what the live enabled set can speak for in the merge below.
+		const personaGrant = this.policy.snapshot().persona?.grant ?? null;
 		this.policy.exitPersona();
 		this.session.setSessionSpawns(null);
 		this.session.applyPersonaAppendPrompt(undefined);
@@ -340,7 +343,7 @@ export class PersonaRuntime {
 			// mid-persona by an extension.
 			const baseline = this.policy.effectiveSet();
 			const preEnter = new Set([...snapshot.tools, ...snapshot.mountedToolNames]);
-			// j2l merge, two halves:
+			// j2l merge, three halves:
 			// - Tools REGISTERED mid-persona (absent from the enter-time registry)
 			//   ride the merge — the frozen pre-enter snapshot cannot hold them.
 			// - A name the user ACTIVATED mid-persona (present in the enter
@@ -349,8 +352,25 @@ export class PersonaRuntime {
 			//   set-tools) must SURVIVE: consulting only the registry drops it.
 			//   The live enabled set still carries the activation (the exit's own
 			//   funnel apply is the call below), so union it in.
+			// - A name the user DEACTIVATED mid-persona must STAY deactivated: the
+			//   baseline (an effectiveSet() over the live registry) holds every
+			//   enter-time name, so the snapshot seed alone resurrects it. The
+			//   persona grant attributes the live absence: a persona-GRANTED
+			//   missing name is a user toggle (keep it off), a persona-DENIED one
+			//   was stripped by the persona's own narrowing — the toggle funnel
+			//   rejects re-activating a persona-denied tool — so the live set
+			//   cannot speak for the user there and the frozen snapshot restores
+			//   it (the exit funnel re-filters granted() either way). The mounted
+			//   seed keeps the pre-enter presentation verbatim: an xd:// mount is
+			//   never a `/mcp` toggle target, and dropping it here would unmount
+			//   the pre-persona device when its name is absent from the live
+			//   mounted set for any other reason.
 			const live = new Set(this.session.getEnabledToolNames());
-			const merged = [...snapshot.tools];
+			const merged: string[] = [];
+			for (const name of snapshot.tools) {
+				if ((personaGrant === null || personaGrant.has(name)) && !live.has(name)) continue;
+				merged.push(name);
+			}
 			for (const name of baseline) {
 				if (enterRegistry?.has(name) ? live.has(name) && !preEnter.has(name) : !merged.includes(name)) {
 					merged.push(name);

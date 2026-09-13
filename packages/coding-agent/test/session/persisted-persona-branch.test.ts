@@ -192,6 +192,31 @@ describe("reconcileSessionPersona branch ancestry", () => {
 		expect(created.getPersonaAppendPrompt()).toContain("fixture reader persona");
 	});
 
+	// The counterpart of fwULw: after resuming an `agent -> plan` journal the
+	// user can unwind the outer mode AND then explicitly exit the persona,
+	// producing CONSECUTIVE `none` markers. The first one unwinds the
+	// transparent plan marker; the second has nothing left to unwind and IS the
+	// persona exit — treating every `none` under a persona as transparent would
+	// keep a persona the user explicitly left.
+	it("a second consecutive `none` ends the persona", async () => {
+		const manager = SessionManager.create(tempDir.path(), path.join(tempDir.path(), "sessions"));
+		manager.appendMessage({ role: "user", content: "turn", timestamp: Date.now() });
+		manager.appendModeChange("agent", { name: "fixture-reader" });
+		manager.appendModeChange("plan", { planFilePath: "local://PLAN.md" });
+		// Outer-mode exit, then the explicit persona exit on top of it.
+		manager.appendModeChange("none");
+		manager.appendModeChange("none");
+		await manager.ensureOnDisk();
+		await manager.flush();
+
+		await writeFixtureAgent();
+		const created = createSession(manager);
+
+		await reconcileSessionPersona(created, { buildHooks: () => ({ apply: async () => {} }) });
+
+		expect(created.getPersonaRuntime()!.policy.isPersonaActive()).toBe(false);
+	});
+
 	// An explicit `/agent` exit (`clearPersonaJournalEntry`) appends `none`
 	// while NO persona runs anymore: that marker must still end the persona.
 	it("an explicit `none` with no persona underneath still clears it", async () => {
@@ -313,6 +338,53 @@ You are the wide fixture persona.`,
 		// roll back with it: [read], not the target's [read, write].
 		expect(runtime.policy.isPersonaActive()).toBe(true);
 		expect(runtime.policy.snapshot().persona?.agent.name).toBe("fixture-reader");
+		expect([...(created.getToolPolicy()!.cliGrant ?? [])]).toEqual(["read"]);
+	});
+
+	// The exit direction of the same contract: when the persona-less branch of
+	// reconcileSessionPersona clears the journal ceiling and then FAILS to roll
+	// the runtime off the persona, the rolled-back persona must get its ceiling
+	// back. The clear runs before the fallible transaction, and the runtime's
+	// PolicySnapshot rollback deliberately does not restore cliGrant — without
+	// the catch reinstating it, a still-active persona is left unrestricted.
+	it("a failed persona-less reconcile restores the ceiling the rolled-back persona carries", async () => {
+		await writeFixtureAgent(READER_AGENT_MD);
+		const sourceManager = SessionManager.create(tempDir.path(), path.join(tempDir.path(), "sessions"));
+		sourceManager.appendMessage({ role: "user", content: "source turn", timestamp: Date.now() });
+		sourceManager.appendModeChange("agent", { name: "fixture-reader", explicit: { tools: ["read"] } });
+		await sourceManager.ensureOnDisk();
+		await sourceManager.flush();
+		const created = createSession(sourceManager);
+		const runtime = created.getPersonaRuntime()!;
+		await runtime.reconcile(
+			{ agent: { name: "fixture-reader", description: "", systemPrompt: "", tools: ["read"], source: "bundled" } },
+			{ apply: async () => {} },
+		);
+		expect(runtime.policy.isPersonaActive()).toBe(true);
+		runtime.policy.installJournalCeiling(["read"]);
+		expect([...(created.getToolPolicy()!.cliGrant ?? [])]).toEqual(["read"]);
+
+		// Persona-less journal: no `agent` entry, so reconcile targets NO persona
+		// and clears the ceiling first.
+		const plainManager = SessionManager.create(tempDir.path(), path.join(tempDir.path(), "sessions"));
+		plainManager.appendMessage({ role: "user", content: "plain turn", timestamp: Date.now() });
+		await plainManager.ensureOnDisk();
+		await plainManager.flush();
+		const plainFile = plainManager.getSessionFile();
+		if (!plainFile) throw new Error("Expected plain session file");
+		await plainManager.close();
+		await created.sessionManager.setSessionFile(plainFile);
+
+		// Sabotage the roll-off: the transaction fails and the runtime rolls back
+		// to the still-active persona.
+		const presentationSpy = vi.spyOn(created, "setActiveToolPresentation").mockImplementationOnce(async () => {
+			throw new Error("apply veto");
+		});
+		await reconcileSessionPersona(created, { buildHooks: () => ({ apply: async () => {} }) });
+		presentationSpy.mockRestore();
+
+		// Rolled back INTO the persona, so its ceiling must still govern it.
+		expect(runtime.policy.isPersonaActive()).toBe(true);
 		expect([...(created.getToolPolicy()!.cliGrant ?? [])]).toEqual(["read"]);
 	});
 });

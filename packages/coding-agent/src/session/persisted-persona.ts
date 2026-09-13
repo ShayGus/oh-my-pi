@@ -133,15 +133,18 @@ export function readPersistedAgentPersona(
 		// surface that does not know about personas) appends `mode_change none`
 		// while the persona is still active underneath — that `none` reads as
 		// the transparent marker's exit, NOT a persona exit, when it DIRECTLY
-		// unwinds a plan/goal/vibe marker. A `none` appended straight after an
-		// `agent` marker (the explicit `/agent` exit, the gone-persona
-		// degrade's mode-tail clear) is a real persona exit.
+		// unwinds a plan/goal/vibe marker. A `none` whose predecessor mode
+		// marker is another `none` has nothing left to unwind (C: the user
+		// already exited the outer mode; the explicit `/agent` exit or the
+		// gone-persona degrade's mode-tail clear appended the second one) —
+		// that consecutive `none` IS a real persona exit.
 		if (entry.mode === "none") {
 			const previousModeChange = entries
 				.slice(0, index)
 				.reverse()
 				.find(item => item.type === "mode_change");
-			if ((previousModeChange as { mode?: unknown } | undefined)?.mode !== "agent") continue;
+			const previousMode = (previousModeChange as { mode?: unknown } | undefined)?.mode;
+			if (previousMode !== "agent" && previousMode !== "none") continue;
 		}
 		if (entry.mode === "agent") {
 			const data: Record<string, unknown> =
@@ -246,14 +249,37 @@ export async function reconcileSessionPersona(
 	}
 	if (!desired) {
 		// No persona journal on this branch: a ceiling reinstalled by an
-		// earlier branch's journal must not outlive its carrier.
+		// earlier branch's journal must not outlive its carrier. The clear
+		// runs BEFORE the fallible reconcile below — its PolicySnapshot
+		// rollback deliberately does not restore cliGrant, so the catch must
+		// reinstate the ceiling the rolled-back persona still carries.
+		const previousJournalCeiling = runtime.policy.journalCeiling;
 		runtime.policy.clearCliGrantFromJournal();
 		// Branching (RPC/ACP/SDK #reconcileModeAfterBranch) can land on an
 		// entry from BEFORE the persona's `mode_change agent` marker while the
 		// live session still runs the persona — the live branch must match its
 		// persisted mode state, so reconcile the runtime to NO persona.
 		if (runtime.policy.isPersonaActive()) {
-			await runtime.reconcile(undefined, hooks.buildHooks(session));
+			try {
+				await runtime.reconcile(undefined, hooks.buildHooks(session));
+			} catch (error) {
+				// Same ceiling-reinstatement contract as the entry path's catch:
+				// the runtime's PolicySnapshot rollback does not restore cliGrant,
+				// so a persona rolled back INTO carries the ceiling it had.
+				if (previousJournalCeiling) {
+					runtime.policy.installJournalCeiling([...previousJournalCeiling]);
+				} else {
+					runtime.policy.clearCliGrantFromJournal();
+				}
+				// No persona is desired on this branch, so this failure has no
+				// name to report: log it directly rather than inventing one for
+				// the surface callback.
+				logger.warn("Failed to reconcile the rolled-back persona off", {
+					sessionId: session.sessionId,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				return { entered: false };
+			}
 		}
 		return { entered: false };
 	}
