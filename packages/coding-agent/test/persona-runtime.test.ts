@@ -710,6 +710,28 @@ describe("PersonaRuntime", () => {
 		expect(last?.toolNames).toContain("extension-tool");
 		expect(last?.toolNames).toContain("write");
 	});
+	// Finding 3 companion: restore() must leave #enterRegistryNames matching
+	// the session the snapshot rolled back TO, not the previous persona's —
+	// the exit merge below keys off it.
+	it("exit keeps a mid-persona activation of an already-registered tool (j2l)", async () => {
+		// The finding's core: the j2l exit merge only adds tools ABSENT from the
+		// enter-time registry. A tool the user enabled MID-PERSONA (an
+		// already-registered default-inactive tool turned on via /mcp or RPC
+		// set-tools — granted() passes when the persona grants it) is therefore
+		// dropped: the merge treats it as pre-enter. The merge must consult the
+		// PRE-ENTER PRESENTATION, not the registry: a name the persona's enter
+		// left disabled but the user activated while it ran stays active.
+		const { stub, session } = makeSessionStub();
+		const runtime = makeRuntime(session, stub);
+		// "dormant" registered before the persona, NOT enabled.
+		stub.registeredToolNames = [...ALL_TOOLS, "dormant"];
+		await runtime.enter(makeAgent(), {}, makeHooks());
+		// Mid-persona activation (funnel passes: null grant covers registered names).
+		stub.enabledToolNames = [...stub.enabledToolNames, "dormant"];
+		await runtime.exit(makeHooks());
+		const last = stub.presentationCalls.at(-1);
+		expect(last?.toolNames).toContain("dormant");
+	});
 
 	// j2l merge: the union must not resurrect a pre-entry deactivation — a name
 	// the user toggled OFF before the persona entered stays off after exit.

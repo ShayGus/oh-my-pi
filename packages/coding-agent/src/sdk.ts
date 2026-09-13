@@ -1922,7 +1922,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// Effective spawn policy (persona `spawns` override first, CLI `--spawns`
 			// fallback): read through AgentSession so task preflight sees persona
 			// narrowing live. Before construction falls back to the launch config.
-			getSessionSpawns: () => session?.getSessionSpawns() ?? (options.spawns ? options.spawns : "*"),
+			// Nullish fallback: `""` is a DELIBERATE deny-all (see the AgentSession
+			// host getter) — a truthy test here would flip it to `"*"` and the
+			// pre-construction prompt build would advertise unrestricted spawning.
+			getSessionSpawns: () => session?.getSessionSpawns() ?? (options.spawns !== undefined ? options.spawns : "*"),
 			getToolPolicy: () => toolPolicy,
 			getModelString: () => (hasExplicitModel && model ? formatModelString(model) : undefined),
 			getActiveModelString,

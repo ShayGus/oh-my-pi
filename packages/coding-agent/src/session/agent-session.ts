@@ -2240,7 +2240,7 @@ export class AgentSession {
 		// Target has no persona entry: the teardown before the switch already
 		// exited the source persona (and a rollback restored the source state,
 		// whose persona was ALSO exited by that same teardown — nothing to do).
-		if (options.fromRollback && !readPersistedAgentPersona(this.sessionManager.getEntries())) {
+		if (options.fromRollback && !readPersistedAgentPersona(this.sessionManager.getBranch())) {
 			logger.warn("Persona re-activation after switch rollback skipped: journal has no agent entry", {
 				sessionFile,
 			});
@@ -8156,7 +8156,30 @@ export class AgentSession {
 			// before committing rolls the persona + journal grant back below, so the
 			// discarded state must survive for that rollback.
 			this.#pendingDeferredModelRestore = undefined;
-			this.toolPolicy?.clearCliGrantFromJournal();
+			if (this.toolPolicy?.journalCeiling) {
+				// The persona exit (when one ran) restored its presentation THROUGH
+				// the journal ceiling — `granted()` gates the exit's snapshot
+				// replay, so only ceilinged names are active. Clearing the ceiling
+				// alone leaves that narrowed presentation in place: `effective()`
+				// reports the fresh session unrestricted while the model cannot
+				// actually call anything outside the stale set. Repopulate the
+				// presentation from the policy's now-unbounded effective set
+				// (registry ∩ sessionToggles — no persona, no ceiling).
+				this.toolPolicy.clearCliGrantFromJournal();
+				const restored = this.toolPolicy.effectiveSet();
+				await this.setActiveToolPresentation(
+					[...restored],
+					this.getMountedXdevToolNames().filter(name => restored.has(name)),
+				);
+			} else {
+				this.toolPolicy?.clearCliGrantFromJournal();
+			}
+			// A give-up'd (or session-level ACP) deferred persona restore also parks
+			// its baseline in the runtime's #deferredExitBaseline — a mid-turn
+			// enter in the FRESH session would otherwise adopt that stale
+			// pre-persona model as the new persona's exit baseline. The persona
+			// lineage died with the transcript; drop the parked value too.
+			this.getPersonaRuntime()?.onPendingModelRestoreFlushed();
 
 			this.#clearSessionScopedToolState();
 			this.#clearCheckpointRuntimeState();
@@ -10319,6 +10342,15 @@ export class AgentSession {
 		this.#advisors.resetSessionState({ preserveCost: true });
 		this.#todo.syncFromBranch();
 		this.#closeCodexProviderSessionsForHistoryRewrite();
+
+		// j2n: the leaf move just replaced the active branch. A branch landing
+		// PAST an `agent` mode_change marker must re-enter that persona, and a
+		// branch landing BEFORE it (rewind past the activation) must exit a
+		// still-live one — matching what branch()/branchFromBtw() already do
+		// through #reconcileModeAfterBranch. navigateTree() otherwise leaves the
+		// pre-navigation persona (and its restricted grant) attached to a
+		// transcript that no longer records it.
+		await this.#reconcileModeAfterBranch();
 
 		this.#branchSummaryAbortController = undefined;
 

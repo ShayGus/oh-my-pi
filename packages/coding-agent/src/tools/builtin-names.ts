@@ -87,6 +87,18 @@ export function expandExecToolShorthand(names: readonly string[], backends?: Eva
 	expanded.push("bash");
 	return Array.from(new Set(expanded));
 }
+/**
+ * Checkpoint and rewind are a pair: a tool list naming one without the other
+ * strands the agent (it can checkpoint but not rewind, or vice versa). The
+ * session builders auto-include the sister tool for one-sided explicit lists;
+ * persona grants must pair through the SAME rule instead of a drifting copy.
+ * Unrelated names pass through unchanged.
+ */
+export function withPairedCheckpointRewind(names: readonly string[]): string[] {
+	if (names.includes("checkpoint") && !names.includes("rewind")) return [...names, "rewind"];
+	if (names.includes("rewind") && !names.includes("checkpoint")) return [...names, "checkpoint"];
+	return [...names];
+}
 
 /** MCP tool names carry the `mcp__<server>_<tool>` prefix minted by `createMCPToolName`. */
 export function isMCPToolName(name: string): boolean {

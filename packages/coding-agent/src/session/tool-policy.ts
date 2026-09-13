@@ -1,4 +1,4 @@
-import { expandExecToolShorthand, normalizeToolNames } from "../tools/builtin-names";
+import { expandExecToolShorthand, normalizeToolNames, withPairedCheckpointRewind } from "../tools/builtin-names";
 
 import type { AgentDefinition } from "../task/types";
 
@@ -229,6 +229,13 @@ export class SessionToolPolicy {
 		// baseline-effective (a size-comparison against the registry is unsound:
 		// a cliGrant with unknown names can still omit default-active tools, and
 		// a sessionToggle that only ADDS a tool is not a restriction).
+		// A non-null cliGrant is ITSELF a restriction: a whitelist naming every
+		// default-ACTIVE tool still omits default-INACTIVE registry tools, and
+		// the child derivation must stay bounded by baselineEffectiveSet() or a
+		// child definition explicitly naming an omitted tool would activate it
+		// past the parent's CLI whitelist (resolveEffectiveSubagentPolicy would
+		// otherwise pass no parent grant at all).
+		if (this.cliGrant !== null) return true;
 		for (const name of this.#globalRegistry()) {
 			if (this.#isDefaultActive(name) && !this.#baselineEffective(name)) return true;
 		}
@@ -320,7 +327,7 @@ export class SessionToolPolicy {
 		// first). expandExecToolShorthand passes unknown names through.
 		const declaredOrInherited =
 			declared !== undefined
-				? normalizeToolNames(expandExecToolShorthand(declared))
+				? withPairedCheckpointRewind(normalizeToolNames(expandExecToolShorthand(declared)))
 				: normalizeToolNames(this.cliGrant ?? explicit.tools ?? []);
 		const grant = new Set(declaredOrInherited);
 

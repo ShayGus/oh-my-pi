@@ -1111,6 +1111,12 @@ Alpha.`,
 		expect(policy.isPersonaActive()).toBe(false);
 		expect(policy.cliGrant).toBeNull();
 		expect(policy.effective("write")).toBe(true);
+		// Review P2 (presentation half): the source teardown already filtered the
+		// LIVE presentation through the ceiling — clearing the grant alone leaves
+		// only `read` active. The persona-less branch must repopulate the
+		// presentation from the now-unbounded effective set.
+		expect(liveSession.getActiveToolNames()).toContain("write");
+		expect(liveSession.getEnabledToolNames()).toContain("write");
 	});
 
 	// Codex R5-1: when the gone-persona baseline restore FAILS (an extension
@@ -1458,6 +1464,44 @@ Alpha.`,
 		// snapshot must not be replayed onto it.
 		expect(liveSession.getActiveToolNames()).toContain("write");
 		await created.stop();
+	});
+
+	// j2n: navigateTree() replaces the active branch without reconciling —
+	// unlike branch()/branchFromBtw(), which run #reconcileModeAfterBranch. A
+	// rewind landing on an ancestry that records a persona must drive the same
+	// session-level reconcile, or tree navigation leaves the pre-navigation
+	// persona state (grant, prompt, presentation) attached to a transcript
+	// that does not match it.
+	it("navigateTree reconciles the persisted persona after the leaf move (j2n)", async () => {
+		await writeFixtureAgent(READER_AGENT_MD);
+		const manager = SessionManager.create(tempDir.path(), path.join(tempDir.path(), "sessions"));
+		manager.appendMessage({ role: "user", content: "before the persona", timestamp: Date.now() });
+		// Persona marker journaled (as a live /agent enter would), then a later
+		// user turn whose ancestry still carries the marker.
+		manager.appendModeChange("agent", { name: "fixture-reader" });
+		const afterMarkerId = manager.appendMessage({
+			role: "user",
+			content: "after the persona",
+			timestamp: Date.now() + 1,
+		});
+		await manager.ensureOnDisk();
+		await manager.flush();
+
+		const liveSession = createSession(manager);
+		// No InteractiveMode, no reconciler slot: the raw session IS the surface,
+		// matching the headless branch/switch paths this mirrors.
+		const runtime = liveSession.getPersonaRuntime()!;
+		expect(runtime.policy.isPersonaActive()).toBe(false);
+
+		// Navigate onto the post-marker user message: the leaf moves to its
+		// parent (the `agent` marker), so the ancestry records the persona and
+		// the reconcile must ENTER it. Pre-fix navigateTree ran no reconcile at
+		// all — the persona stayed off.
+		const navigated = await liveSession.navigateTree(afterMarkerId, { summarize: false });
+		expect(navigated.cancelled).toBe(false);
+		expect(runtime.policy.isPersonaActive()).toBe(true);
+		expect(liveSession.getPersonaAppendPrompt()).toContain("fixture reader persona");
+		expect(liveSession.getActiveToolNames()).not.toContain("write");
 	});
 
 	it("headless switchSession to a persona session re-enters the target persona (j2n)", async () => {

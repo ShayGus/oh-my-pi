@@ -129,6 +129,20 @@ export function readPersistedAgentPersona(
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
 		if (entry.type !== "mode_change") continue;
+		// fwULw: an ordinary outer-mode exit path (plan/goal/vibe unwound by a
+		// surface that does not know about personas) appends `mode_change none`
+		// while the persona is still active underneath — that `none` reads as
+		// the transparent marker's exit, NOT a persona exit, when it DIRECTLY
+		// unwinds a plan/goal/vibe marker. A `none` appended straight after an
+		// `agent` marker (the explicit `/agent` exit, the gone-persona
+		// degrade's mode-tail clear) is a real persona exit.
+		if (entry.mode === "none") {
+			const previousModeChange = entries
+				.slice(0, index)
+				.reverse()
+				.find(item => item.type === "mode_change");
+			if ((previousModeChange as { mode?: unknown } | undefined)?.mode !== "agent") continue;
+		}
 		if (entry.mode === "agent") {
 			const data: Record<string, unknown> =
 				typeof entry.data === "object" && entry.data !== null ? (entry.data as Record<string, unknown>) : {};
@@ -226,7 +240,7 @@ export async function reconcileSessionPersona(
 	const runtime = (
 		session as AgentSession & Partial<Record<"getPersonaRuntime", () => PersonaRuntime | undefined>>
 	).getPersonaRuntime?.();
-	const desired = readPersistedAgentPersona(session.sessionManager.getEntries());
+	const desired = readPersistedAgentPersona(session.sessionManager.getBranch());
 	if (!runtime) {
 		return { entered: false };
 	}
@@ -243,15 +257,24 @@ export async function reconcileSessionPersona(
 		}
 		return { entered: false };
 	}
+	// fwULu: the journal ceiling is replaced (or cleared) inside the try BELOW,
+	// BEFORE the fallible discovery + runtime transaction — and the
+	// transaction's PolicySnapshot rollback deliberately does NOT restore
+	// cliGrant. A failed reconcile (persona-to-persona switch) would leave the
+	// rolled-back SOURCE persona governed by the TARGET branch's ceiling.
+	// Capture the pre-install journal ceiling here (hoisted above the try so
+	// the catch can reinstate it); a CLI-typed grant (journalCeiling null on a
+	// "cli" source) is untouched by both restore paths.
+	const previousJournalCeiling = runtime.policy.journalCeiling;
+	// Durable CLI ceiling (installed BEFORE discovery/teardown so even the
+	// gone-persona degrade keeps this session bounded — the ceiling's only
+	// carrier is the persona entry, which the degrade is about to erase;
+	// the NEXT resume's clear marker drops it): `explicit.tools` is only
+	// ever recorded FROM a CLI `--tools`/`--no-tools` grant (every enter
+	// path serializes policy.cliGrant there, main.ts the launch flags), so
+	// resuming without the flag would otherwise leave the fresh
+	// null-grant policy unbounded once the persona narrows nothing.
 	try {
-		// Durable CLI ceiling (installed BEFORE discovery/teardown so even the
-		// gone-persona degrade keeps this session bounded — the ceiling's only
-		// carrier is the persona entry, which the degrade is about to erase;
-		// the NEXT resume's clear marker drops it): `explicit.tools` is only
-		// ever recorded FROM a CLI `--tools`/`--no-tools` grant (every enter
-		// path serializes policy.cliGrant there, main.ts the launch flags), so
-		// resuming without the flag would otherwise leave the fresh
-		// null-grant policy unbounded once the persona narrows nothing.
 		if (desired.explicit?.tools) {
 			runtime.policy.installJournalCeiling(desired.explicit.tools);
 		} else {
@@ -294,7 +317,17 @@ export async function reconcileSessionPersona(
 					await session.setModelTemporary(session.model, baseline.thinkingLevel);
 				}
 			}
-			session.sessionManager.appendModeChange("none");
+			// fwULv: a transparent plan/goal/vibe marker AFTER the persona entry
+			// stays the journal's authoritative mode tail (buildSessionContext
+			// resolves the LAST mode_change) — appending `none` here would
+			// overwrite the outer mode's state on the next resume. Only clear
+			// the journal when `agent` is already the mode tail; on the
+			// transparent-tail path the degrade is re-noticed once per resume
+			// until the outer mode is unwound (its own next exit appends `none`
+			// past the dead persona entry).
+			if (personaJournalModeIsTail(session.sessionManager.getBranch())) {
+				session.sessionManager.appendModeChange("none");
+			}
 			logger.warn(`Session persona "${desired.name}" is no longer available; resuming without it`, {
 				sessionId: session.sessionId,
 			});
@@ -332,6 +365,16 @@ export async function reconcileSessionPersona(
 		await runtime.reconcile({ agent, explicit: desired.explicit, baselineOverride }, hooks.buildHooks(session));
 		return { entered: true };
 	} catch (error) {
+		// fwULu: the journal ceiling was already replaced (or cleared) BEFORE
+		// the fallible transaction — and the runtime's PolicySnapshot rollback
+		// deliberately does NOT restore cliGrant, so the rolled-back SOURCE
+		// persona would stay governed by the TARGET branch's ceiling.
+		// Reinstate the PRE-INSTALL journal ceiling captured above.
+		if (previousJournalCeiling) {
+			runtime.policy.installJournalCeiling([...previousJournalCeiling]);
+		} else {
+			runtime.policy.clearCliGrantFromJournal();
+		}
 		if (hooks.onError) {
 			await hooks.onError(session, desired.name, error);
 		} else {

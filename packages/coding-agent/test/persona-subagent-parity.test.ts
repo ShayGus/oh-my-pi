@@ -418,6 +418,21 @@ describe("subagent spawn inheritance parity", () => {
 		);
 		expect(new Set(child)).toEqual(new Set(["bash", "eval"]));
 	});
+	// fw_sH: a raw legacy alias (`search`→grep, `find`→glob) must normalize
+	// BEFORE the parent intersect — the grant holds canonical names only, so a
+	// first-intersect alias would be discarded with nothing left to re-normalize.
+	it("child legacy alias under a canonical-granting parent keeps the canonical tool (fw_sH)", () => {
+		const grant = new Set(["read", "grep", "glob"]);
+		const child = deriveChildToolNames(
+			{ ...CHILD_AGENT, tools: ["search", "find"], spawns: undefined },
+			{
+				parentEffectiveGrant: grant,
+				restrictToolNames: true,
+				atMaxDepth: false,
+			},
+		);
+		expect(new Set(child)).toEqual(new Set(["grep", "glob"]));
+	});
 	it("executor dispatch carries the parent's baseline grant end to end", async () => {
 		const persona = makePersona();
 		mockDiscovery();

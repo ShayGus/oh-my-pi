@@ -261,3 +261,44 @@ test("apply without any thinking source leaves the level untouched", async () =>
 	expect(stub.state.thinkingLevel).toBe(ThinkingLevel.Medium);
 	expect(stub.calls.filter(call => call.op === "setThinkingLevel")).toHaveLength(0);
 });
+// Finding 4: a persona `model` naming a discovery-backed model that is
+// absent from the COLD offline cache resolves to nothing synchronously —
+// the persona silently stayed on the base session model for the whole
+// session (interactive discovery starts only after init, and the
+// post-discovery rebind refreshes only the CURRENTLY SELECTED model).
+// The default hooks must retry the persona selector once the background
+// refresh settles: resolve → (miss + discoverable provider) → await → retry.
+test("apply retries a discovery-backed persona model after the background refresh", async () => {
+	const stub = makeStubSession({ model: BASELINE_MODEL });
+	// Registry that starts WITHOUT the persona model and gains it when the
+	// awaited refresh runs — the cold-cache shape (a discoverable provider
+	// still empty at session construction).
+	const models: Model[] = [BASELINE_MODEL];
+	const settled = { value: false };
+	const stubbed = stubRegistry(stub.session, models);
+	const registry = (stubbed as { modelRegistry: unknown }).modelRegistry as {
+		getAvailable: () => Model[];
+		getDiscoverableProviders?: () => string[];
+		refreshDiscoverableProviders?: (providers: Iterable<string>) => Promise<void>;
+	};
+	registry.getDiscoverableProviders = () => (settled.value ? [] : ["stub"]);
+	registry.refreshDiscoverableProviders = async providers => {
+		for (const _provider of providers) {
+			settled.value = true;
+			models.push(PERSONA_MODEL);
+		}
+	};
+	const hooks = createDefaultPersonaModelHooks(stubbed);
+	await hooks.apply(makeAgent({ model: ["stub/claude-persona"] }));
+	expect(stub.state.model).toBe(PERSONA_MODEL);
+});
+
+// No retry without a discoverable provider: a pattern the registry cannot
+// supply at all leaves the baseline (the existing unresolvable contract).
+test("apply keeps the baseline when the miss has no discoverable provider", async () => {
+	const stub = makeStubSession({ model: BASELINE_MODEL });
+	const hooks = createDefaultPersonaModelHooks(stubRegistry(stub.session, [BASELINE_MODEL]));
+	await hooks.apply(makeAgent({ model: ["stub/claude-persona"] }));
+	expect(stub.state.model).toBe(BASELINE_MODEL);
+	expect(stub.calls).toHaveLength(0);
+});

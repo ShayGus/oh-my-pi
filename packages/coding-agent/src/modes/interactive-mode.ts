@@ -887,6 +887,14 @@ export class InteractiveMode implements InteractiveModeContext {
 	#headerAfter: readonly Component[] = [];
 	#planModePreviousToolPresentation: { enabled: string[]; mounted: string[] } | undefined;
 	#goalModePreviousTools: string[] | undefined;
+	// j2x: the pre-switch persona teardown discards the outer mode's pre-mode
+	// snapshots so a successful switch cannot replay them onto the target.
+	// A FAILED switch restores the persona runtime state but not these TUI
+	// snapshots — stashing them here keeps the still-active source mode's
+	// presentation restorable until #clearTransientModeState clears the stash
+	// on the next successful reconciliation.
+	#personaSwitchRollbackPlan: { enabled: string[]; mounted: string[] } | undefined;
+	#personaSwitchRollbackGoal: string[] | undefined;
 	#vibeModePreviousTools: string[] | undefined;
 	#vibeModeOwnerScope: VibeOwnerScope | undefined;
 	// In-flight #enterVibeMode promise: set before the activateVibeTools await
@@ -3488,7 +3496,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		if (this.planModeEnabled || this.planModePaused) {
 			this.session.setPlanModeState(undefined);
 			try {
-				const previousPresentation = this.#planModePreviousToolPresentation;
+				// j2x: a failed persona switch discarded the primary snapshot but
+				// left the stash behind — the still-active source mode restores
+				// from it.
+				const previousPresentation = this.#planModePreviousToolPresentation ?? this.#personaSwitchRollbackPlan;
 				if (previousPresentation) {
 					await this.session.restoreNonMCPToolPresentation(
 						previousPresentation.enabled,
@@ -3510,8 +3521,12 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 
 		if (this.goalModeEnabled || this.goalModePaused) {
-			if (this.#goalModePreviousTools !== undefined) {
-				await this.session.setActiveToolsByName(this.#goalModePreviousTools);
+			// j2x: a failed persona switch discarded the primary snapshot but
+			// left the stash behind — the still-active source mode restores
+			// from it.
+			const goalPreviousTools = this.#goalModePreviousTools ?? this.#personaSwitchRollbackGoal;
+			if (goalPreviousTools !== undefined) {
+				await this.session.setActiveToolsByName(goalPreviousTools);
 			}
 			this.session.setGoalModeState(undefined);
 			this.goalModeEnabled = false;
@@ -3523,6 +3538,11 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#cancelGoalContinuation();
 			this.#updateGoalModeStatus();
 		}
+		// j2x: the switch committed — the stash belongs to the (former) source
+		// session; drop it so a later failed switch cannot restore stale
+		// snapshots from an older boundary.
+		this.#personaSwitchRollbackPlan = undefined;
+		this.#personaSwitchRollbackGoal = undefined;
 
 		if (this.vibeModeEnabled && !options?.preserveVibe) {
 			const ownerScope = this.#vibeModeOwnerScope;
@@ -3671,7 +3691,27 @@ export class InteractiveMode implements InteractiveModeContext {
 			// (switchSession already exited the persona, so the shared
 			// reconcile's clear never runs here). A live CLI --tools grant is
 			// untouched; a cold resume never had a journal install to drop.
-			this.session.getToolPolicy()?.clearCliGrantFromJournal();
+			// The target records no persona, so no ceiling carrier survives:
+			// drop a journal-installed grant the SOURCE session reinstalled
+			// (switchSession already exited the persona, so the shared
+			// reconcile's clear never runs here). A live CLI --tools grant is
+			// untouched; a cold resume never had a journal install to drop.
+			// The source teardown already filtered the LIVE presentation through
+			// that ceiling (`granted()` gates the exit's snapshot replay), so
+			// clearing the grant alone leaves only ceilinged names active while
+			// `effective()` reports the target unrestricted — repopulate the
+			// presentation from the policy's now-unbounded effective set.
+			const policy = this.session.getToolPolicy();
+			if (policy?.journalCeiling) {
+				policy.clearCliGrantFromJournal();
+				const restored = policy.effectiveSet();
+				await this.session.setActiveToolPresentation(
+					[...restored],
+					this.session.getMountedXdevToolNames().filter(name => restored.has(name)),
+				);
+			} else {
+				policy?.clearCliGrantFromJournal();
+			}
 			return;
 		}
 		await reconcileSessionPersona(this.session, {
@@ -3712,13 +3752,30 @@ export class InteractiveMode implements InteractiveModeContext {
 		// itself is torn down after the switch; only its stale source snapshot is
 		// discarded here, so the restore step is skipped and the target's own
 		// active set survives.
+		// j2x: stash the snapshots BEFORE discarding. A failed switch (persona
+		// exit rollback, bash/journal flush failure) restores the persona
+		// runtime state but not these TUI-owned fields — the stash keeps the
+		// still-active source mode's presentation restorable, and the plan/goal
+		// exit paths reinstate from it.
+		this.#personaSwitchRollbackPlan = this.#planModePreviousToolPresentation;
+		this.#personaSwitchRollbackGoal = this.#goalModePreviousTools;
 		this.#planModePreviousToolPresentation = undefined;
 		this.#goalModePreviousTools = undefined;
 		const runtime = this.session.getPersonaRuntime();
-		if (!runtime?.policy.isPersonaActive()) return;
+		if (!runtime?.policy.isPersonaActive()) {
+			this.#personaSwitchRollbackPlan = undefined;
+			this.#personaSwitchRollbackGoal = undefined;
+			return;
+		}
 		try {
 			await runtime.exit(this.#createPersonaModelHooks());
 		} catch (error) {
+			// The exit's internal rollback reinstated the persona; reinstate the
+			// mode snapshots with it — the source mode is still active.
+			this.#planModePreviousToolPresentation = this.#personaSwitchRollbackPlan;
+			this.#goalModePreviousTools = this.#personaSwitchRollbackGoal;
+			this.#personaSwitchRollbackPlan = undefined;
+			this.#personaSwitchRollbackGoal = undefined;
 			logger.warn(`Failed to exit source persona ${reasonSuffix}`.trim(), {
 				sessionFile: this.sessionManager.getSessionFile(),
 				error: error instanceof Error ? error.message : String(error),
@@ -3886,7 +3943,10 @@ export class InteractiveMode implements InteractiveModeContext {
 			: undefined;
 		this.session.setPlanModeState(undefined);
 		try {
-			const previousPresentation = this.#planModePreviousToolPresentation;
+			// j2x: a failed persona switch discarded the primary snapshot but
+			// left the stash behind — the still-active source mode restores
+			// from it.
+			const previousPresentation = this.#planModePreviousToolPresentation ?? this.#personaSwitchRollbackPlan;
 			if (previousPresentation) {
 				await this.session.restoreNonMCPToolPresentation(
 					previousPresentation.enabled,
@@ -3993,7 +4053,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		paused?: boolean;
 		reason?: "completed" | "paused" | "dropped";
 	}): Promise<void> {
-		const previousTools = this.#goalModePreviousTools;
+		// j2x: a failed persona switch discarded the primary snapshot but left
+		// the stash behind — the still-active source mode restores from it.
+		const previousTools = this.#goalModePreviousTools ?? this.#personaSwitchRollbackGoal;
 		if (this.goalModeEnabled && previousTools) {
 			await this.session.setActiveToolsByName(previousTools);
 		}

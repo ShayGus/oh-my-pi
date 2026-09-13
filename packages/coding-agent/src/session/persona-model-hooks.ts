@@ -1,13 +1,13 @@
-import type { Model } from "@oh-my-pi/pi-ai";
+import type { Api, Model } from "@oh-my-pi/pi-ai";
 
 import type { AgentSession } from "./agent-session";
 import type { DiscoveredAgent, PersonaExplicitOverrides } from "./tool-policy";
 
 export type { PersonaExplicitOverrides };
 
-import { resolveModelOverride } from "../config/model-resolver";
-import type { ConfiguredThinkingLevel } from "../thinking";
-import { parseConfiguredThinkingLevel } from "../thinking";
+import { type ModelLookupRegistry, resolveModelOverride } from "../config/model-resolver";
+import type { ModelRegistry } from "../config/model-registry";
+import { type ConfiguredThinkingLevel, parseConfiguredThinkingLevel } from "../thinking";
 
 /**
  * Model/thinking apply seam between the persona runtime and the session's
@@ -78,6 +78,42 @@ export interface ModelBaseline {
 }
 
 /**
+ * One discovery-aware resolution attempt: resolve against the catalog as it
+ * stands; on a MISS whose provider is a configured discovery provider still
+ * pending in this process (cold offline cache), await the background refresh
+ * scoped to that provider and re-resolve. Interactive startup begins online
+ * model discovery only after init, so a persona's `model:` naming a
+ * discovery-backed model otherwise silently stays unresolved for the whole
+ * session — the post-discovery rebind refreshes only the CURRENTLY selected
+ * model, never the persona selector. Missing registry seams (test stubs,
+ * registry flavors without discovery) skip straight to the miss.
+ */
+async function resolveWithDiscoveryRetry(
+	patterns: string[],
+	session: AgentSession,
+): Promise<{
+	model?: Model<Api>;
+	thinkingLevel?: ConfiguredThinkingLevel;
+	explicitThinkingLevel: boolean;
+	warning?: string;
+}> {
+	const registry = session.modelRegistry as ModelLookupRegistry & Partial<ModelRegistry>;
+	const resolved = resolveModelOverride(patterns, session.modelRegistry, session.settings);
+	if (resolved.model) return resolved;
+	// Which providers COULD still supply the selector: a miss whose provider is
+	// not even configured for discovery can never resolve — no retry.
+	const pending = new Set<string>();
+	for (const pattern of patterns) {
+		const provider = pattern.trim().split(/[/:@]/)[0]?.toLowerCase();
+		if (provider && registry.getDiscoverableProviders?.().includes(provider)) pending.add(provider);
+	}
+	if (pending.size === 0) return resolved;
+	if (typeof registry.refreshDiscoverableProviders !== "function") return resolved;
+	await registry.refreshDiscoverableProviders(pending);
+	return resolveModelOverride(patterns, session.modelRegistry, session.settings);
+}
+
+/**
  * Default hooks bound to one session. Baseline capture reads `session.model`
  * and `session.configuredThinkingLevel()` immediately before any mutation; the
  * runtime owns the restore (it never calls back into this instance).
@@ -96,19 +132,18 @@ export function createDefaultPersonaModelHooks(session: AgentSession): PersonaMo
 			const resolvedThinking: Array<ConfiguredThinkingLevel | undefined> = [];
 			const explicitModelPattern = explicit?.model?.trim();
 			if (explicitModelPattern) {
-				const resolved = resolveModelOverride([explicitModelPattern], session.modelRegistry, session.settings);
+				const resolved = await resolveWithDiscoveryRetry([explicitModelPattern], session);
 				if (resolved.model) {
 					await session.setModel(resolved.model);
 					resolvedThinking.push(resolved.thinkingLevel);
 				}
 			} else if (agent.model && agent.model.length > 0) {
-				const resolved = resolveModelOverride(agent.model, session.modelRegistry, session.settings);
+				const resolved = await resolveWithDiscoveryRetry(agent.model, session);
 				if (resolved.model) {
 					await session.setModel(resolved.model);
 					resolvedThinking.push(resolved.thinkingLevel);
 				}
 			}
-
 			const explicitThinking =
 				explicit?.thinking !== undefined ? parseConfiguredThinkingLevel(explicit.thinking) : undefined;
 			// fw2QC: a thinking suffix on the EXPLICIT model selector

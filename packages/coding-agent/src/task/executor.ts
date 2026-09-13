@@ -62,7 +62,7 @@ import { truncateTail } from "../session/streaming-output";
 import { type ConfiguredThinkingLevel, prewalkWouldBeNoop, resolveTaskEffortLevel, type TaskEffort } from "../thinking";
 import type { ContextFileEntry, ToolSession } from "../tools";
 import { type EvalBackendsAllowance, resolveEvalBackends } from "../tools/eval-backends";
-import { expandExecToolShorthand } from "../tools/builtin-names";
+import { expandExecToolShorthand, normalizeToolNames } from "../tools/builtin-names";
 import { isIrcEnabled } from "../tools/hub";
 import { LIST_STATUS_ORDER } from "../tools/hub/messaging";
 import { DEFAULT_HUB_LIST_LIMIT } from "../tools/hub/types";
@@ -3054,7 +3054,10 @@ export function deriveChildToolNames(agent: AgentDefinition, options: ChildToolN
 		// intersect — the parent grant only ever holds concrete tool names, so a
 		// child declaring `tools: [exec]` under a [bash]-granting parent must
 		// keep bash here, not vanish in the intersect.
-		const expanded = expandExecToolShorthand(agent.tools, options.evalBackends);
+		// fw_sH: legacy aliases (`search`→grep, `find`→glob) normalize BEFORE the
+		// intersect — the parent grant only holds canonical names, so a raw alias
+		// intersected first would be discarded with nothing left to re-normalize.
+		const expanded = normalizeToolNames(expandExecToolShorthand(agent.tools, options.evalBackends));
 		toolNames = parentGrant ? expanded.filter(name => parentGrant.has(name)) : expanded;
 		// Auto-include task tool if spawns defined but task not in tools. The
 		// intersection may have dropped it — re-add only if the parent can run it.

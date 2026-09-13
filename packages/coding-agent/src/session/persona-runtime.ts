@@ -239,7 +239,17 @@ export class PersonaRuntime {
 					mountedToolNames: [...snap.activePresentationSnapshot.mountedToolNames],
 				}
 			: undefined;
-		this.#enterRegistryNames = snap.enterRegistryNames;
+		// A snapshot that carries no enter-registry names (the restore() field
+		// was introduced after the snapshot was taken, or a caller-built
+		// snapshot) falls back to the registry as the session presents it NOW:
+		// the names the rolled-back persona is about to present were registered
+		// at or before ITS enter, so the eventual exit merge must treat them as
+		// pre-enter — only genuinely later registrations ride the j2l merge.
+		// Reusing a PREVIOUS persona's enter names instead would drop
+		// activations the rolled-back persona's enter captured (an
+		// already-registered default-inactive tool enabled via /mcp or RPC
+		// set-tools would vanish from the exit restore).
+		this.#enterRegistryNames = snap.enterRegistryNames ?? new Set(this.session.getAllToolNames());
 		const { model, thinkingLevel } = snap.baseModelOverride;
 		if (model !== undefined && this.session.model !== model) {
 			await this.session.setModel(model);
@@ -329,15 +339,30 @@ export class PersonaRuntime {
 			// j2l merge: restore pre-enter snapshot tools plus any tool registered
 			// mid-persona by an extension.
 			const baseline = this.policy.effectiveSet();
+			const preEnter = new Set([...snapshot.tools, ...snapshot.mountedToolNames]);
+			// j2l merge, two halves:
+			// - Tools REGISTERED mid-persona (absent from the enter-time registry)
+			//   ride the merge — the frozen pre-enter snapshot cannot hold them.
+			// - A name the user ACTIVATED mid-persona (present in the enter
+			//   registry but NOT in the pre-enter presentation — an already
+			//   registered default-inactive tool turned on via /mcp or RPC
+			//   set-tools) must SURVIVE: consulting only the registry drops it.
+			//   The live enabled set still carries the activation (the exit's own
+			//   funnel apply is the call below), so union it in.
+			const live = new Set(this.session.getEnabledToolNames());
 			const merged = [...snapshot.tools];
 			for (const name of baseline) {
-				if (!enterRegistry?.has(name) && !merged.includes(name)) {
+				if (enterRegistry?.has(name) ? live.has(name) && !preEnter.has(name) : !merged.includes(name)) {
 					merged.push(name);
 				}
 			}
 			const mergedMounted = [...snapshot.mountedToolNames];
 			for (const name of this.session.getMountedXdevToolNames()) {
-				if (baseline.has(name) && !enterRegistry?.has(name) && !mergedMounted.includes(name)) {
+				if (
+					baseline.has(name) &&
+					(enterRegistry?.has(name) ? live.has(name) && !preEnter.has(name) : true) &&
+					!mergedMounted.includes(name)
+				) {
 					mergedMounted.push(name);
 				}
 			}
