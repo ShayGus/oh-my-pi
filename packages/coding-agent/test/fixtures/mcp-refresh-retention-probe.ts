@@ -55,11 +55,11 @@ const host: SessionToolsHost = {
 	planModeEnabled: () => false,
 	model: () => undefined,
 	memoryBackendSession: () => ({}) as never,
-	clearInheritedProviderPromptCacheKey: () => { },
-	clearMemoryPromotionSnapshot: () => { },
-	captureMemoryPromotionSnapshot: () => { },
-	emitNotice: () => { },
-	notifyCommandMetadataChanged: () => { },
+	clearInheritedProviderPromptCacheKey: () => {},
+	clearMemoryPromotionSnapshot: () => {},
+	captureMemoryPromotionSnapshot: () => {},
+	emitNotice: () => {},
+	notifyCommandMetadataChanged: () => {},
 	localProtocolOptions: () => ({}),
 };
 const sessionTools = new SessionTools(host, {

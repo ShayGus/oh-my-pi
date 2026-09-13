@@ -2235,10 +2235,29 @@ export class AgentSession {
 			});
 			return;
 		}
+		await this.reconcilePersistedPersona(sessionFile);
+	}
+
+	/**
+	 * j2n/j2q: re-enter the persona this session's journal records, through the
+	 * shared headless reconcile (no TUI reconciler slot involved).
+	 *
+	 * Called by `switchSession`/branch for headless surfaces, and directly by the
+	 * non-interactive startup for `--resume`/`--continue`: the TUI and ACP each
+	 * reconcile at their own init (InteractiveMode constructor,
+	 * `reconcileAcpSessionPersona`), but print and RPC mode hand the constructed
+	 * session straight to their runner, so without this call `omp -p --resume` of
+	 * a persona session would start unrestricted, with no persona grant, prompt,
+	 * model, or spawn policy. Never journal-writes on success (the entry already
+	 * exists); a persona the journal names but discovery can no longer resolve
+	 * degrades to unrestricted via the shared helper, which journals the clear
+	 * marker too.
+	 */
+	async reconcilePersistedPersona(sessionFile?: string): Promise<void> {
 		await reconcileSessionPersona(this, {
 			buildHooks: createDefaultPersonaModelHooks,
 			// fured: the gone-persona degrade must reach the client on headless
-			// surfaces too — a session-level notice (TUI forwards it as a status
+			// surfaces too — a session-level notice (the TUI forwards it as a status
 			// line, RPC includes `notice` in its event stream, ACP maps it onto
 			// an agent_message_chunk). Matching the TUI reconcile wording.
 			onGone: (session, persona) => {
@@ -2247,8 +2266,8 @@ export class AgentSession {
 					`Agent persona "${persona}" is no longer available; session resumed without it.`,
 				);
 			},
-			onError: (session, persona, error) => {
-				logger.warn("Failed to reconcile persisted persona after session switch", {
+			onError: (_session, persona, error) => {
+				logger.warn("Failed to reconcile persisted persona", {
 					sessionFile,
 					persona,
 					error: error instanceof Error ? error.message : String(error),

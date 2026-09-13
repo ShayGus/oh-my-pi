@@ -1638,4 +1638,33 @@ Alpha.`,
 		expect(switched).toBe(false);
 		expect(runtime.policy.isPersonaActive()).toBe(true); // source persona intact
 	});
+
+	it("reconciles the persisted persona through the headless entry point (print/RPC resume)", async () => {
+		// Print and RPC mode hand the constructed session straight to their runner,
+		// so they never reach the TUI constructor or the ACP load path that own the
+		// persona reconcile. Without `reconcilePersistedPersona`, `omp -p --resume`
+		// of this journal would start unrestricted: no grant, prompt, or spawns.
+		const sourceManager = SessionManager.create(tempDir.path(), path.join(tempDir.path(), "sessions"));
+		sourceManager.appendMessage({ role: "user", content: "prior turn", timestamp: Date.now() });
+		sourceManager.appendModeChange("agent", { name: "fixture-reader" });
+		await sourceManager.ensureOnDisk();
+		await sourceManager.flush();
+		const sourceFile = sourceManager.getSessionFile();
+		if (!sourceFile) throw new Error("Expected session file");
+		await sourceManager.close();
+
+		await writeFixtureAgent(READER_AGENT_MD);
+		const createdSession = createSession(
+			await SessionManager.open(sourceFile, path.join(tempDir.path(), "sessions")),
+		);
+		expect(createdSession.getPersonaRuntime()!.policy.isPersonaActive()).toBe(false);
+
+		await createdSession.reconcilePersistedPersona();
+
+		expect(createdSession.getPersonaRuntime()!.policy.isPersonaActive()).toBe(true);
+		expect(createdSession.getPersonaAppendPrompt()).toContain("fixture reader persona");
+		const active = new Set(createdSession.getActiveToolNames());
+		expect(active.has("read")).toBe(true);
+		expect(active.has("write")).toBe(false);
+	});
 });

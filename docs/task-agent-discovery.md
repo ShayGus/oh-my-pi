@@ -68,7 +68,7 @@ Set the role mapping in `~/.omp/agent/config.yml`:
 
 ```yaml
 modelRoles:
-  review: openai/gpt-5.4:high
+   review: openai/gpt-5.4:high
 ```
 
 `@review` resolves through `modelRoles.review`. Each `modelRoles.<role>` value stores a concrete model selector and may append a thinking suffix such as `:high` (`src/config/model-resolver.ts`). Changing that mapping affects subsequent task resolutions without editing agent definitions. Task/eval preflight reloads the current global, project, and explicit overlay settings before rediscovering agents, so agent files and their role aliases added during a live session resolve from one refreshed configuration state.
@@ -77,10 +77,8 @@ For a dispatch, set the agent name and task:
 
 ```json
 {
-  "context": "Review the current change in this repository.",
-  "tasks": [
-    { "agent": "reviewer", "task": "Report concrete correctness findings." }
-  ]
+	"context": "Review the current change in this repository.",
+	"tasks": [{ "agent": "reviewer", "task": "Report concrete correctness findings." }]
 }
 ```
 
@@ -98,12 +96,12 @@ Route these tiers through roles by keeping aliases in `task.agentModelOverrides`
 
 ```yaml
 task:
-  agentModelOverrides:
-    sonic: "@fast_worker"
-    task: "@good_worker"
+   agentModelOverrides:
+      sonic: "@fast_worker"
+      task: "@good_worker"
 modelRoles:
-  fast_worker: openai/gpt-5-mini
-  good_worker: openai/gpt-5.4:high
+   fast_worker: openai/gpt-5-mini
+   good_worker: openai/gpt-5.4:high
 ```
 
 The `vibe_spawn` `cli` remains `fast` or `good`; update `modelRoles` to change the worker model.
@@ -296,18 +294,20 @@ omp --agent reviewer --resume <id>
 ```
 
 - `--agent <name>` looks up the agent through normal discovery (project,
-  user, extension, bundled). Unknown names fail with the same
-  `Unknown agent "..."` error as task dispatch.
+  user, extension, bundled). Unknown names fail loudly before the session is
+  built: `Unknown --agent "<name>". Run "omp agents" to list discovered agents.`
+  (task dispatch phrases its own `Unknown agent "..."` error separately).
 - The persona's frontmatter `model` and thinking level become the session's
   starting selection unless you pass `--model` / `--thinking` explicitly:
   CLI flags win over the persona.
 - The persona's system prompt is appended to the session's base prompt
   (memory and conventions still apply); its `tools:` frontmatter restricts the effective tool set
   (intersected with any `--tools` grant you pass, never widened by it).
-- `spawns:` frontmatter controls which subagents the session may spawn; a
-  declared-but-empty `spawns: ""` disables spawning entirely (an omitted
-  `spawns` with a `tools:` list including `task` defaults to `*` per the
-  discovery backward-compat rule).
+- `spawns:` frontmatter controls which subagents the session may spawn: `*`,
+  a CSV list, or an array restricts to those names. An omitted `spawns` with a
+  `tools:` list including `task` defaults to `*` per the discovery
+  backward-compat rule. Empty spellings (`spawns: ""`, `[]`) parse as omitted
+  rather than deny-all — disable the `task` tool instead.
 
 Inside a session, `/agent <name>` switches the live session to another
 persona. `/agent` with no arguments exits an active persona and returns the
@@ -329,5 +329,8 @@ behaviors to expect:
 While streaming, the tool grant and prompt change immediately and the model
 change is queued for turn end.
 
-The persona choice persists in the session record, so `--resume` restores it;
-run `/agent` after resuming to drop the persona.
+The persona choice persists in the session record, so `--resume` restores it
+in the TUI, ACP, print, and RPC surfaces; run `/agent` after resuming to drop
+the persona. `omp acp --agent <name>` resolves the name per client workspace
+rather than at launch, so a name that misses there simply starts
+persona-less.

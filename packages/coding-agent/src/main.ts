@@ -2276,6 +2276,12 @@ export async function runRootCommand(
 				// Branch-only protocol runner: keep RPC host code out of normal interactive startup.
 				const runRpcMode: RunRpcMode = (await import("./modes/rpc/rpc-mode")).runRpcMode;
 				stopStartupWatchdog();
+				// j2q: RPC and print hand the constructed session straight to their
+				// runner, unlike the TUI (InteractiveMode constructor) and ACP
+				// (reconcileAcpSessionPersona), so a persona recorded in a resumed
+				// journal is re-entered here. `--agent X` already entered during
+				// construction (sdk.ts) and this is a no-op for it.
+				await session.reconcilePersistedPersona();
 				await runRpcMode(session, mode === "rpc-ui" ? setToolUIContext : undefined, subagentEventBus, rpcInput);
 			} else if (isInteractive) {
 				const versionCheckPromise = checkForNewVersion(VERSION).catch(() => undefined);
@@ -2330,6 +2336,9 @@ export async function runRootCommand(
 				// Branch-only single-shot runner: keep print-mode code out of normal interactive startup.
 				stopStartupWatchdog();
 				const runPrintMode: RunPrintMode = (await import("./modes/print-mode")).runPrintMode;
+				// j2q: see the RPC branch — print mode bypasses the TUI/ACP persona
+				// reconcile, so a resumed persona session must be re-entered here.
+				await session.reconcilePersistedPersona();
 				const exitCode = await runPrintMode(session, {
 					mode,
 					messages: initialArgs.messages,
