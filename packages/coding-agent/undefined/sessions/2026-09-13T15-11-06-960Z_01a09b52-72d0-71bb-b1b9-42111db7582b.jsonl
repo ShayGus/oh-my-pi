@@ -1,5 +1,0 @@
-{"type":"title","v":1,"title":"","updatedAt":"2026-09-13T15:11:06.960Z","pad":"                                                                                                                                                                              "}
-{"type":"session","version":3,"id":"01a09b52-72d0-71bb-b1b9-42111db7582b","timestamp":"2026-09-13T15:11:06.960Z","cwd":"/home/slava/aiexp/oh-my-pi/packages/coding-agent"}
-{"type":"message","id":"401e559b","parentId":null,"timestamp":"2026-09-13T15:11:06.961Z","message":{"role":"user","content":"turn","timestamp":1789312266961}}
-{"type":"mode_change","id":"cf190d09","parentId":"401e559b","timestamp":"2026-09-13T15:11:06.961Z","mode":"agent","data":{"name":"p1"}}
-{"type":"mode_change","id":"39176187","parentId":"cf190d09","timestamp":"2026-09-13T15:11:06.961Z","mode":"plan","data":{"planFilePath":"/home/slava/.omp/agent/sessions/-aiexp-oh-my-pi/2026-09-13T01-25-45-153Z_01a0985e-ce41-72a2-9b58-bca227fa4a95/local/PLAN.md"}}
