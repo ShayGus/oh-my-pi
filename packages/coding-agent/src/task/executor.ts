@@ -3252,7 +3252,15 @@ export function deriveChildToolNames(agent: AgentDefinition, options: ChildToolN
 	// Ordinary agents retain the host's always-on collaboration capability.
 	// Restricted sessions must not widen their explicit host tool list with hub:
 	// for a restricted parent, hub is either already in the grant or out by policy.
-	if (toolNames && !options.restrictToolNames && !parentGrant && !toolNames.includes("hub")) {
+	// Read-only agents (scout, `tools: []`) never gain hub: it would hand them
+	// process-execution and outbound IRC reach, unless they can spawn tasks.
+	if (
+		toolNames &&
+		!options.restrictToolNames &&
+		!parentGrant &&
+		!toolNames.includes("hub") &&
+		(!isReadOnlyAgent(agent) || toolNames.includes("task"))
+	) {
 		toolNames = [...toolNames, "hub"];
 	}
 	return toolNames;

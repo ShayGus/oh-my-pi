@@ -372,6 +372,19 @@ export class PersonaRuntime {
 				merged.push(name);
 			}
 			for (const name of baseline) {
+				// A name the user ACTIVATED mid-persona (an already-registered
+				// default-inactive tool turned on via /mcp or RPC) sits in neither
+				// the snapshot nor the effective() baseline — effective() folds in
+				// the default-activity layer, which answers "on by default", not
+				// "may it run". The live enabled set still carries the activation
+				// (this exit's own funnel apply is the call below), so union in
+				// every live tool the persona grant permits. The persona-grant
+				// conjunct is load-bearing: without it a persona-DENIED tool the
+				// user forced on mid-persona would leak past the exit merge.
+				if (live.has(name) && !preEnter.has(name) && (personaGrant === null || personaGrant.has(name))) {
+					if (!merged.includes(name)) merged.push(name);
+					continue;
+				}
 				if (enterRegistry?.has(name) ? live.has(name) && !preEnter.has(name) : !merged.includes(name)) {
 					merged.push(name);
 				}

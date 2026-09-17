@@ -195,9 +195,13 @@ export function createAcpPersonaModelHooks(
 		deferModelRestoreWhileStreaming: baseline => {
 			// Mid-turn persona exit: queue the pre-persona restore on the
 			// session; `agent_end` applies it, so the advertised turn-end
-			// restore actually lands.
-			if (!baseline.model) return;
-			session.queueDeferredModelRestore?.(baseline.model, baseline.thinkingLevel);
+			// restore actually lands. A thinking-only persona (or an
+			// unresolvable baseline model) leaves baseline.model undefined —
+			// fall back to the live model (TUI parity) so the thinking-level
+			// half still restores instead of stranding the persona level.
+			const model = baseline.model ?? session.model;
+			if (!model) return;
+			session.queueDeferredModelRestore?.(model, baseline.thinkingLevel);
 			void emitNotice(PERSONA_RESTORE_DEFERRED_NOTICE_TEMPLATE);
 		},
 		// Rollback safety: undo THIS transaction's queue mutation by restoring

@@ -349,8 +349,11 @@ export async function reconcileSessionPersona(
 			// overwrite the outer mode's state on the next resume. Only clear
 			// the journal when `agent` is already the mode tail; on the
 			// transparent-tail path the degrade is re-noticed once per resume
-			// until the outer mode is unwound (its own next exit appends `none`
-			// past the dead persona entry).
+			// until the outer mode is unwound (its own next exit appends the
+			// `none` past the dead persona entry — readPersistedAgentPersona
+			// then sees consecutive `none`s and stops returning the persona,
+			// ending the loop). Deliberate trade: a `none` that unwound a live
+			// outer mode must not masquerade as a persona exit (fwULw).
 			if (personaJournalModeIsTail(session.sessionManager.getBranch())) {
 				session.sessionManager.appendModeChange("none");
 			}
