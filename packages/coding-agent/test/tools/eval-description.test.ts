@@ -87,6 +87,7 @@ describe("eval tool description", () => {
 			getSessionSpawns: () => (optionsSpawns !== undefined ? optionsSpawns : "*"),
 		} as unknown as ToolSession);
 		expect(tool.description).not.toContain("agent(prompt");
+	});
 	it("omits spawning helpers but keeps wait() when recursion depth is exhausted", () => {
 		const belowCap = new EvalTool(makeSession({ taskDepth: 1, maxRecursionDepth: 2 })).description;
 		const atCap = new EvalTool(makeSession({ taskDepth: 2, maxRecursionDepth: 2 })).description;
