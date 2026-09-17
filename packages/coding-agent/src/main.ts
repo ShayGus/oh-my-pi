@@ -2534,7 +2534,8 @@ export async function runRootCommand(
 				const runPrintMode: RunPrintMode = (await import("./modes/print-mode")).runPrintMode;
 				// j2q: see the RPC branch — print mode bypasses the TUI/ACP persona
 				// reconcile, so a resumed persona session must be re-entered here.
-				await session.reconcilePersistedPersona();
+				// Optional call: headless test doubles stub AgentSession without it.
+				await session.reconcilePersistedPersona?.();
 				const exitCode = await runPrintMode(session, {
 					mode,
 					messages: initialArgs.messages,
