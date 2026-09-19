@@ -24,16 +24,7 @@ function assistant(content: AssistantMessage["content"], stopReason: AssistantMe
 	};
 }
 
-const payload = [
-	'<SM:EDIT path="src/a.ts">',
-	"<SM:FIND>",
-	"const x = 1;",
-	"</SM:FIND>",
-	"<SM:PUT>",
-	"const x = 2;",
-	"</SM:PUT>",
-	"</SM:EDIT>",
-].join("\n");
+const payload = ["*** SM:EDIT src/a.ts", "*** SM:FIND", "const x = 1;", "*** SM:PUT", "const x = 2;"].join("\n");
 
 describe("recoverInlineSloppyEdit", () => {
 	test("lifts a stray payload out of prose into a synthetic edit tool call", () => {
@@ -41,11 +32,13 @@ describe("recoverInlineSloppyEdit", () => {
 
 		expect(recoverInlineSloppyEdit(message)).toBe(1);
 		const text = message.content.find(block => block.type === "text");
-		expect(text?.type === "text" && text.text).toBe("Fixing the constant.\n\n\nDone.");
+		expect(text?.type === "text" && text.text).toBe("Fixing the constant.\n\n");
 		const call = message.content.find(block => block.type === "toolCall");
 		expect(call?.type === "toolCall" && call.name).toBe("edit");
-		expect(call?.type === "toolCall" && call.arguments).toEqual({ input: payload });
-		expect(call?.type === "toolCall" && call.rawBlock).toBe(payload);
+		expect(call?.type === "toolCall" && call.arguments).toEqual({
+			input: `${payload}\n\nDone.`,
+		});
+		expect(call?.type === "toolCall" && call.rawBlock).toBe(`${payload}\n\nDone.`);
 	});
 
 	test("drops a text block the payload fully occupied, leaving only the call", () => {
