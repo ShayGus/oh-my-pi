@@ -12,7 +12,7 @@ import { Agent } from "@oh-my-pi/pi-agent-core";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { SessionToolPolicy } from "@oh-my-pi/pi-coding-agent/session/tool-policy";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";

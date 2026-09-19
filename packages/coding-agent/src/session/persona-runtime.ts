@@ -6,7 +6,7 @@
  * `PersonaSwitchSnapshot` and restored symmetrically, exactly like Plan Mode.
  */
 import type { Model } from "@oh-my-pi/pi-ai";
-import type { ConfiguredThinkingLevel } from "../thinking";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { AgentSession } from "./agent-session";
 import type { PersonaExplicitOverrides, PersonaModelApplyHooks } from "./persona-model-hooks";
 import type { DiscoveredAgent, PolicySnapshot, SessionToolPolicy } from "./tool-policy";

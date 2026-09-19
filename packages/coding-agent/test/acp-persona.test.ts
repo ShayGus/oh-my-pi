@@ -21,7 +21,7 @@ import type { Api, Model } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import type { EffectiveExtensionRoots } from "@oh-my-pi/pi-coding-agent/capability/types";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import { AcpAgent, createAcpPersonaModelHooks } from "@oh-my-pi/pi-coding-agent/modes/acp/acp-agent";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { PersonaRuntime } from "@oh-my-pi/pi-coding-agent/session/persona-runtime";

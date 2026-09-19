@@ -1,7 +1,7 @@
 import { type SelectItem, SelectList, type SgrMouseEvent } from "@oh-my-pi/pi-tui";
-import { getSelectListTheme } from "../../modes/theme/theme";
-import { OverlayPanel } from "./overlay-box";
-import { routeSelectListMouseWithTopBorder } from "./select-list-mouse-routing";
+import { getSelectListTheme } from "@oh-my-pi/pi-tui/theme/tui-adapters";
+import { OverlayPanel } from "@oh-my-pi/pi-tui/chrome/overlay-box";
+import { routeSelectListMouseWithTopBorder } from "@oh-my-pi/pi-tui/chrome/select-list-mouse-routing";
 
 /**
  * Minimal agent persona picker for bare `/agent` (no persona active): lists

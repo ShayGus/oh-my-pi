@@ -1,13 +1,9 @@
 import { logger } from "@oh-my-pi/pi-utils";
 import type { Model } from "@oh-my-pi/pi-ai";
-import {
-	formatModelString,
-	formatModelStringWithRouting,
-	parseModelPattern,
-	splitUpstreamRouting,
-} from "../config/model-resolver";
-import type { ConfiguredThinkingLevel } from "../thinking";
-import { parseConfiguredThinkingLevel } from "../thinking";
+import { formatModelString, formatModelStringWithRouting, parseModelPattern } from "../config/model-resolver";
+import { splitUpstreamRouting } from "@oh-my-pi/pi-tui/overlays/model-selector";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { AgentSession } from "./agent-session";
 import type { PersonaModelApplyHooks } from "./persona-model-hooks";
 import type { ModelOverrideState, PersonaRuntime } from "./persona-runtime";

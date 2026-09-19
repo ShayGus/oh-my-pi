@@ -7,7 +7,7 @@ export type { PersonaExplicitOverrides };
 
 import { type ModelLookupRegistry, resolveModelOverride } from "../config/model-resolver";
 import type { ModelRegistry } from "../config/model-registry";
-import { type ConfiguredThinkingLevel, parseConfiguredThinkingLevel } from "../thinking";
+import { type ConfiguredThinkingLevel, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 
 /**
  * Model/thinking apply seam between the persona runtime and the session's
