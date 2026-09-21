@@ -47,6 +47,8 @@ import {
 	resolveActiveProjectRegistryPath,
 } from "./discovery/helpers";
 import { injectOmpExtensionCliRoots } from "./discovery/omp-extension-roots";
+import { discoverAgents, getAgent } from "./task/discovery";
+import type { AgentDefinition } from "./task/types";
 import { ExtensionRunner } from "./extensibility/extensions/runner";
 import type { ExtensionUIContext } from "./extensibility/extensions/types";
 import { scheduleMarketplaceAutoUpdate } from "./extensibility/plugins/marketplace-auto-update";
@@ -790,12 +792,23 @@ async function buildSessionOptions(
 		cwd: parsed.cwd ?? getProjectDir(),
 		autoApprove: parsed.autoApprove ?? false,
 	};
+	// Resolve the --agent definition, if any. An unknown name fails fast before
+	// any session is created.
+	let agent: AgentDefinition | undefined;
+	if (parsed.agent) {
+		const discovered = await discoverAgents(options.cwd ?? getProjectDir());
+		agent = getAgent(discovered.agents, parsed.agent);
+		if (!agent) {
+			const available = discovered.agents.map(candidate => candidate.name).join(", ") || "none";
+			throw new Error(`Unknown agent "${parsed.agent}". Available agents: ${available}`);
+		}
+	}
 	if (parsed.maxTime !== undefined) {
 		options.deadline = Date.now() + parsed.maxTime * 1000;
 	}
 
 	// Auto-discover SYSTEM.md if no CLI system prompt provided
-	const systemPromptSource = parsed.systemPrompt ?? discoverSystemPromptFile();
+	const systemPromptSource = parsed.systemPrompt ?? agent?.systemPrompt ?? discoverSystemPromptFile();
 	const resolvedSystemPrompt = await resolvePromptInput(systemPromptSource, "system prompt");
 	const appendPromptSource = parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile();
 	const resolvedAppendPrompt = await resolvePromptInput(appendPromptSource, "append system prompt");
@@ -813,10 +826,13 @@ async function buildSessionOptions(
 	// - supports --provider <name> --model <pattern>
 	// - supports --model <provider>/<pattern>
 	const modelMatchPreferences = getModelMatchPreferences(activeSettings);
-	if (parsed.model) {
+	// --agent supplies a model fallback when no CLI model flag is given. CLI wins.
+	const agentModel = agent?.model?.[0];
+	const applyModelSource = (modelSource: string | undefined): void => {
+		if (!modelSource) return;
 		const resolved = resolveCliModel({
 			cliProvider: parsed.provider,
-			cliModel: parsed.model,
+			cliModel: modelSource,
 			modelRegistry,
 			preferences: modelMatchPreferences,
 		});
@@ -824,10 +840,10 @@ async function buildSessionOptions(
 			process.stderr.write(`${chalk.yellow(`Warning: ${resolved.warning}`)}\n`);
 		}
 		if (resolved.error) {
-			if (!parsed.provider && !parsed.model.includes(":")) {
+			if (!parsed.provider && !modelSource.includes(":")) {
 				// Model not found in built-in registry — defer resolution to after extensions load
 				// (extensions may register additional providers/models via registerProvider)
-				options.modelPattern = parsed.model;
+				options.modelPattern = modelSource;
 			} else {
 				process.stderr.write(`${chalk.red(resolved.error)}\n`);
 				process.exit(1);
@@ -841,6 +857,9 @@ async function buildSessionOptions(
 				options.thinkingLevel = resolved.thinkingLevel;
 			}
 		}
+	};
+	if (parsed.model) {
+		applyModelSource(parsed.model);
 	} else if (scopedModels.length > 0 && !parsed.continue && !parsed.resume) {
 		const remembered = activeSettings.getModelRole("default");
 		if (remembered) {
@@ -870,6 +889,8 @@ async function buildSessionOptions(
 			}
 		}
 		if (!options.model) options.model = scopedModels[0].model;
+	} else if (agentModel && !parsed.continue && !parsed.resume) {
+		applyModelSource(agentModel);
 	}
 
 	// Thinking level
@@ -882,6 +903,8 @@ async function buildSessionOptions(
 		!parsed.resume
 	) {
 		options.thinkingLevel = scopedModels[0].thinkingLevel;
+	} else if (agent?.thinkingLevel) {
+		options.thinkingLevel = agent.thinkingLevel;
 	}
 
 	// Scoped models for Ctrl+P cycling - fill in default thinking levels when not explicit
@@ -910,6 +933,13 @@ async function buildSessionOptions(
 		options.toolNames = parsed.tools && parsed.tools.length > 0 ? parsed.tools : [];
 	} else if (parsed.tools) {
 		options.toolNames = parsed.tools;
+	} else if (agent?.tools && agent.tools.length > 0) {
+		options.toolNames = agent.tools;
+	}
+
+	// Output schema from the --agent definition (structured completion).
+	if (agent?.output !== undefined) {
+		options.outputSchema = agent.output;
 	}
 
 	if (parsed.noLsp) {

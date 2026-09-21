@@ -34,6 +34,9 @@ export default class Index extends Command {
 		plan: Flags.string({
 			description: "Plan model for architectural planning (or PI_PLAN_MODEL env)",
 		}),
+		agent: Flags.string({
+			description: "Agent to run as (loads that agent's definition into this session)",
+		}),
 		provider: Flags.string({
 			description: "Provider to use (legacy; prefer --model)",
 		}),
