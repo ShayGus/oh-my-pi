@@ -108,6 +108,8 @@ import {
 	resolvePromptInput,
 } from "./system-prompt";
 import { createPersistedSubagentReviverFactory } from "./task/persisted-revive";
+import { discoverAgents, getAgent } from "./task/discovery";
+import type { AgentDefinition } from "./task/types";
 import { createTelemetryExportConfig, initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
 import { registerLocalInferenceApi } from "./tiny/local-inference-api";
 import { concreteThinkingLevel, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
@@ -1248,21 +1250,34 @@ export async function buildSessionOptions(
 		throw new Error("--system-prompt and --system-prompt-template cannot be combined");
 	}
 	const cwd = options.cwd;
+	let agent: AgentDefinition | undefined;
+	if (parsed.agent) {
+		const discoveredAgents = await discoverAgents(cwd ?? getProjectDir());
+		agent = getAgent(discoveredAgents.agents, parsed.agent);
+		if (!agent) {
+			const available = discoveredAgents.agents.map(a => a.name).join(", ") || "none";
+			throw new Error(`Unknown agent "${parsed.agent}". Available agents: ${available}`);
+		}
+	}
 	const discoveredOverride =
 		parsed.systemPrompt === undefined && parsed.systemPromptTemplate === undefined
 			? await discoverSystemPromptOverride(cwd)
 			: undefined;
 	const systemPromptSource =
-		parsed.systemPrompt ?? (discoveredOverride?.kind === "text" ? discoveredOverride.path : undefined);
+		parsed.systemPrompt
+		?? (agent && !restoringSession ? agent.systemPrompt : undefined)
+		?? (discoveredOverride?.kind === "text" ? discoveredOverride.path : undefined);
 	const templatePath =
 		parsed.systemPromptTemplate ?? (discoveredOverride?.kind === "template" ? discoveredOverride.path : undefined);
 	const appendPromptSource = parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile();
 	const titleSystemPromptSource = discoverTitleSystemPromptFile(cwd);
 	const [resolvedSystemPrompt, resolvedAppendPrompt, titleSystemPrompt, resolvedSystemPromptTemplate] =
 		await Promise.all([
-			discoveredOverride?.kind === "text"
-				? Promise.resolve(discoveredOverride.content)
-				: resolvePromptInput(systemPromptSource, "system prompt"),
+			agent && !restoringSession
+				? Promise.resolve(agent.systemPrompt)
+				: discoveredOverride?.kind === "text"
+					? Promise.resolve(discoveredOverride.content)
+					: resolvePromptInput(systemPromptSource, "system prompt"),
 			resolvePromptInput(appendPromptSource, "append system prompt"),
 			resolvePromptInput(titleSystemPromptSource, "title system prompt"),
 			// Discovered templates arrive pre-loaded from the capability; only
@@ -1409,7 +1424,22 @@ export async function buildSessionOptions(
 		// instead of an unrelated fallback. The fire-and-forget rebuild then
 		// activates the scoped list once discovery settles (issue #9220).
 		options.modelPattern = parsed.models;
-	}
+	} else if (agent?.model?.length && !restoringSession) {
+		// The agent's model is a low-priority fallback: `--model`, the scoped
+		// default, and a CLI `--models` scope all win. Applied only when not
+		// restoring a session, so a resumed run keeps its own model.
+		const resolved = resolveCliModel({
+			cliModel: agent.model[0],
+			modelRegistry,
+			preferences: modelMatchPreferences,
+		});
+		if (resolved.error) {
+			process.stderr.write(`${chalk.red(resolved.error)}\n`);
+			process.exit(1);
+		} else if (resolved.model) {
+			options.model = resolved.model;
+			options.rebindModelAfterDiscovery = true;
+		}
 
 	if (parsed.noPrewalk && (parsed.prewalk || parsed.prewalkInto !== undefined)) {
 		throw new Error("--no-prewalk cannot be combined with --prewalk or --prewalk-into");
@@ -1548,6 +1578,9 @@ export async function buildSessionOptions(
 	) {
 		options.thinkingLevel = scopedModels[0].thinkingLevel;
 	}
+	} else if (agent?.thinkingLevel && !restoringSession) {
+		options.thinkingLevel = agent.thinkingLevel;
+	}
 
 	// Scoped models for Ctrl+P cycling — fill in default thinking levels when not explicit.
 	if (scopedModels.length > 0) {
@@ -1575,6 +1608,11 @@ export async function buildSessionOptions(
 		options.toolNames = parsed.tools && parsed.tools.length > 0 ? parsed.tools : [];
 	} else if (parsed.tools) {
 		options.toolNames = parsed.tools;
+	} else if (agent?.tools?.length && !restoringSession) {
+		options.toolNames = agent.tools;
+	}
+	if (agent?.output !== undefined && !restoringSession) {
+		options.outputSchema = agent.output;
 	}
 
 	if (parsed.noLsp) {
