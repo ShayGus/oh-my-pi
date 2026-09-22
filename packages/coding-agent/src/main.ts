@@ -36,6 +36,7 @@ import {
 	DEFAULT_PREWALK_TARGET,
 	expandRoleAlias,
 	getModelMatchPreferences,
+	resolveAgentModelSelection,
 	resolveCliModel,
 	resolveConfiguredModelPatterns,
 	type ResolveCliModelResult,
@@ -1425,21 +1426,25 @@ export async function buildSessionOptions(
 		// activates the scoped list once discovery settles (issue #9220).
 		options.modelPattern = parsed.models;
 	} else if (agent?.model?.length && !restoringSession) {
-		// The agent's model is a low-priority fallback: `--model`, the scoped
-		// default, and a CLI `--models` scope all win. Applied only when not
-		// restoring a session, so a resumed run keeps its own model.
-		const resolved = resolveCliModel({
-			cliModel: agent.model[0],
-			modelRegistry,
-			preferences: modelMatchPreferences,
+		// The agent's model list is a low-priority fallback: `--model`, the
+		// scoped default, and a CLI `--models` scope all win. Applied only when
+		// not restoring a session, so a resumed run keeps its own model. The
+		// full ordered list defers through `modelPattern` — the same path a task
+		// sub-agent uses — so the first available selector wins after extension
+		// discovery and the rest install as runtime fallbacks under the
+		// `agent:<name>` role.
+		const selection = resolveAgentModelSelection({
+			agentModel: agent.model,
+			settings: activeSettings,
 		});
-		if (resolved.error) {
-			process.stderr.write(`${chalk.red(resolved.error)}\n`);
-			process.exit(1);
-		} else if (resolved.model) {
-			options.model = resolved.model;
-			options.rebindModelAfterDiscovery = true;
+		if (selection.patterns.length > 0) {
+			options.modelPattern = selection.patterns;
+			options.modelPatternFallbackRole = `agent:${agent.name}`;
+			if (agent.thinkingLevel) {
+				options.modelPatternDefaultThinkingLevel = agent.thinkingLevel;
+			}
 		}
+	}
 
 	if (parsed.noPrewalk && (parsed.prewalk || parsed.prewalkInto !== undefined)) {
 		throw new Error("--no-prewalk cannot be combined with --prewalk or --prewalk-into");
@@ -1577,8 +1582,10 @@ export async function buildSessionOptions(
 		!restoringSession
 	) {
 		options.thinkingLevel = scopedModels[0].thinkingLevel;
-	}
-	} else if (agent?.thinkingLevel && !restoringSession) {
+	} else if (agent?.thinkingLevel && !restoringSession && !(agent.model?.length && options.modelPattern)) {
+		// Agents with a deferred model list carry their thinking default on
+		// `modelPatternDefaultThinkingLevel` instead, so it cannot outrank the
+		// selected selector's explicit effort suffix.
 		options.thinkingLevel = agent.thinkingLevel;
 	}
 
