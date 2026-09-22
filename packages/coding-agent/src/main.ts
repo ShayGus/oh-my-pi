@@ -1329,6 +1329,31 @@ export async function buildSessionOptions(
 	// createAgentSession's post-extension re-resolution (issue #6694); the
 	// scoped thinking-level seed below must be deferred along with the model.
 	let deferredDefaultRole = false;
+	// Applies the agent's ordered model list through the deferred `modelPattern`
+	// path a task sub-agent uses: the first available selector wins after
+	// extension discovery and the rest install as runtime fallbacks under the
+	// `agent:<name>` role. Low-priority by design — an explicit `--model`, a
+	// remembered default that resolves (or defers) within the scope, and an
+	// explicit CLI `--models` scope all outrank it. Returns whether it applied;
+	// skipped when restoring, so a resumed session keeps its own model.
+	const applyAgentModelPattern = (): boolean => {
+		if (!agent?.model?.length || restoringSession) {
+			return false;
+		}
+		const selection = resolveAgentModelSelection({
+			agentModel: agent.model,
+			settings: activeSettings,
+		});
+		if (selection.patterns.length === 0) {
+			return false;
+		}
+		options.modelPattern = selection.patterns;
+		options.modelPatternFallbackRole = `agent:${agent.name}`;
+		if (agent.thinkingLevel) {
+			options.modelPatternDefaultThinkingLevel = agent.thinkingLevel;
+		}
+		return true;
+	};
 	if (parsed.model) {
 		const resolved = resolveCliModel({
 			cliProvider: parsed.provider,
@@ -1411,8 +1436,14 @@ export async function buildSessionOptions(
 		// escape it — keep pinning the first scoped model there.
 		deferredDefaultRole = !options.model && Boolean(remembered) && !((parsed.models?.length ?? 0) > 0);
 		if (!options.model && !deferredDefaultRole) {
-			options.model = scopedModels[0].model;
-			options.rebindModelAfterDiscovery = true;
+			// The agent model outranks a settings-derived `enabledModels` scope;
+			// an explicit CLI `--models` scope still outranks the agent model.
+			// `scopedModels` stays on the options below for Ctrl+P cycling.
+			const agentModelApplied = (parsed.models?.length ?? 0) === 0 && applyAgentModelPattern();
+			if (!agentModelApplied) {
+				options.model = scopedModels[0].model;
+				options.rebindModelAfterDiscovery = true;
+			}
 		}
 	} else if ((parsed.models?.length ?? 0) > 0 && !restoringSession) {
 		// A CLI `--models` scope that resolved to zero models at startup: its
@@ -1425,25 +1456,8 @@ export async function buildSessionOptions(
 		// instead of an unrelated fallback. The fire-and-forget rebuild then
 		// activates the scoped list once discovery settles (issue #9220).
 		options.modelPattern = parsed.models;
-	} else if (agent?.model?.length && !restoringSession) {
-		// The agent's model list is a low-priority fallback: `--model`, the
-		// scoped default, and a CLI `--models` scope all win. Applied only when
-		// not restoring a session, so a resumed run keeps its own model. The
-		// full ordered list defers through `modelPattern` — the same path a task
-		// sub-agent uses — so the first available selector wins after extension
-		// discovery and the rest install as runtime fallbacks under the
-		// `agent:<name>` role.
-		const selection = resolveAgentModelSelection({
-			agentModel: agent.model,
-			settings: activeSettings,
-		});
-		if (selection.patterns.length > 0) {
-			options.modelPattern = selection.patterns;
-			options.modelPatternFallbackRole = `agent:${agent.name}`;
-			if (agent.thinkingLevel) {
-				options.modelPatternDefaultThinkingLevel = agent.thinkingLevel;
-			}
-		}
+	} else {
+		applyAgentModelPattern();
 	}
 
 	if (parsed.noPrewalk && (parsed.prewalk || parsed.prewalkInto !== undefined)) {
@@ -1579,7 +1593,10 @@ export async function buildSessionOptions(
 		// thinking suffix) after extensions register; seeding the fallback
 		// scoped model's level here would override it in createAgentSession.
 		!deferredDefaultRole &&
-		!restoringSession
+		!restoringSession &&
+		// An applied agent model list owns the startup effort through its
+		// selected selector; the settings-derived scope must not override it.
+		!(agent?.model?.length && options.modelPattern)
 	) {
 		options.thinkingLevel = scopedModels[0].thinkingLevel;
 	} else if (agent?.thinkingLevel && !restoringSession && !(agent.model?.length && options.modelPattern)) {
@@ -1620,6 +1637,10 @@ export async function buildSessionOptions(
 	}
 	if (agent?.output !== undefined && !restoringSession) {
 		options.outputSchema = agent.output;
+		// The SDK appends `yield` to the active tool list when this is set, so
+		// structured output stays deliverable even when the agent's tools are
+		// an explicit list without `yield`.
+		options.requireYieldTool = true;
 	}
 
 	if (parsed.noLsp) {

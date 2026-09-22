@@ -33,6 +33,11 @@ const SELECTORS = [
 	"anthropic/claude-sonnet-4-6:low",
 ];
 const AGENT_THINKING_DEFAULT = Effort.Low;
+const AGENT_OUTPUT_SCHEMA = {
+	type: "object",
+	properties: { answer: { type: "string" } },
+	required: ["answer"],
+};
 
 describe("cli --agent launch parity with task subagent model handling", () => {
 	let tempDir: string;
@@ -53,6 +58,15 @@ describe("cli --agent launch parity with task subagent model handling", () => {
 				"model:",
 				...SELECTORS.map(selector => `  - ${selector}`),
 				"thinking-level: low",
+				"tools:",
+				"  - read",
+				"output:",
+				"  type: object",
+				"  properties:",
+				"    answer:",
+				"      type: string",
+				"  required:",
+				"    - answer",
 				"---",
 				"",
 				"Parity fixture agent body.",
@@ -135,4 +149,114 @@ describe("cli --agent launch parity with task subagent model handling", () => {
 		},
 		120_000,
 	);
+
+	test("buildSessionOptions does not let a settings-derived scopedModels scope hide the agent model", async () => {
+		const parsed = parseArgs(["--agent", AGENT_NAME]);
+		Object.assign(parsed, { cwd: tempDir });
+		const available = modelRegistry.getAvailable();
+		const opus = available.find(model => model.provider === "anthropic" && model.id === "claude-opus-4-5");
+		const sonnet = available.find(model => model.provider === "anthropic" && model.id === "claude-sonnet-4-6");
+		if (!opus || !sonnet) throw new Error("fixture catalog is missing the anthropic models");
+		// Simulates a settings `enabledModels` scope: no CLI --models, no remembered default.
+		const scopedModels = [
+			{ model: opus, explicitThinkingLevel: false },
+			{ model: sonnet, explicitThinkingLevel: false },
+		];
+		const options = await buildSessionOptions(
+			parsed,
+			scopedModels,
+			SessionManager.inMemory(),
+			modelRegistry,
+			isolatedSettings,
+		);
+		// The agent model wins: full ordered deferred pattern, not scopedModels[0].
+		const selectors = options.modelPattern as string[];
+		expect(Array.isArray(selectors)).toBe(true);
+		expect(selectors).toHaveLength(3);
+		expect(selectors[1]).toContain("claude-opus-4-5");
+		expect(options.modelPatternFallbackRole).toBe(AGENT_ROLE);
+		expect(options.model).toBeUndefined();
+		// The settings scope stays available for Ctrl+P cycling.
+		expect(options.scopedModels?.map(entry => entry.model.id)).toEqual(["claude-opus-4-5", "claude-sonnet-4-6"]);
+	});
+
+	test("buildSessionOptions keeps an explicit CLI --models scope above the agent model", async () => {
+		const parsed = parseArgs(["--agent", AGENT_NAME, "--models", "anthropic/claude-sonnet-4-6"]);
+		Object.assign(parsed, { cwd: tempDir });
+		const sonnet = modelRegistry
+			.getAvailable()
+			.find(model => model.provider === "anthropic" && model.id === "claude-sonnet-4-6");
+		if (!sonnet) throw new Error("fixture catalog is missing the anthropic models");
+		const scopedModels = [{ model: sonnet, explicitThinkingLevel: false }];
+		const options = await buildSessionOptions(
+			parsed,
+			scopedModels,
+			SessionManager.inMemory(),
+			modelRegistry,
+			isolatedSettings,
+		);
+		expect(options.model?.provider).toBe("anthropic");
+		expect(options.model?.id).toBe("claude-sonnet-4-6");
+		expect(options.modelPattern).toBeUndefined();
+		expect(options.modelPatternFallbackRole).toBeUndefined();
+	});
+
+	test("buildSessionOptions keeps explicit CLI --thinking and --tools above the agent defaults", async () => {
+		const parsed = parseArgs(["--agent", AGENT_NAME, "--thinking", "high", "--tools", "bash,read"]);
+		Object.assign(parsed, { cwd: tempDir });
+		const options = await buildSessionOptions(parsed, [], SessionManager.inMemory(), modelRegistry, isolatedSettings);
+		expect(options.thinkingLevel).toBe(Effort.High);
+		expect(options.toolNames).toEqual(["bash", "read"]);
+		// The agent model list itself still applies.
+		expect(options.modelPatternFallbackRole).toBe(AGENT_ROLE);
+	});
+
+	test("buildSessionOptions sets requireYieldTool and the output schema for an agent with declared output", async () => {
+		const parsed = parseArgs(["--agent", AGENT_NAME]);
+		Object.assign(parsed, { cwd: tempDir });
+		const options = await buildSessionOptions(parsed, [], SessionManager.inMemory(), modelRegistry, isolatedSettings);
+		expect(options.outputSchema).toEqual(AGENT_OUTPUT_SCHEMA);
+		// parseAgentFields already appends `yield` to the agent's explicit tools.
+		expect(options.toolNames).toEqual(["read", "yield"]);
+		expect(options.requireYieldTool).toBe(true);
+	});
+
+	test(
+		"createAgentSession activates yield alongside the agent's explicit tool list",
+		async () => {
+			const parsed = parseArgs(["--agent", AGENT_NAME]);
+			Object.assign(parsed, { cwd: tempDir });
+			const options = await buildSessionOptions(
+				parsed,
+				[],
+				SessionManager.inMemory(),
+				modelRegistry,
+				isolatedSettings,
+			);
+			const result = await createAgentSession({
+				...options,
+				disableExtensionDiscovery: true,
+				authStorage,
+				modelRegistry,
+				settings: isolatedSettings,
+			});
+			const session = result.session;
+			try {
+				const activeToolNames = session.getActiveToolNames();
+				expect(activeToolNames).toContain("read");
+				expect(activeToolNames).toContain("yield");
+			} finally {
+				await session.dispose().catch(() => {});
+			}
+		},
+		120_000,
+	);
+
+	test("buildSessionOptions rejects an unknown agent before creating a session", async () => {
+		const parsed = parseArgs(["--agent", "no-such-agent"]);
+		Object.assign(parsed, { cwd: tempDir });
+		await expect(
+			buildSessionOptions(parsed, [], SessionManager.inMemory(), modelRegistry, isolatedSettings),
+		).rejects.toThrow(/Unknown agent/);
+	});
 });
